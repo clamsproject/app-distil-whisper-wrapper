@@ -3,4 +3,4 @@ clams-python==1.2.4
 transformers
 accelerate
 numpy<2
-pip install ffmpeg-python
+ffmpeg-python

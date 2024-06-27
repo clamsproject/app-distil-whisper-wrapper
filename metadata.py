@@ -13,19 +13,11 @@ from lapps.discriminators import Uri
 
 # DO NOT CHANGE the function name
 def appmetadata() -> AppMetadata:
-    """
-    Function to set app-metadata values and return it as an ``AppMetadata`` obj.
-    Read these documentations before changing the code below
-    - https://sdk.clams.ai/appmetadata.html metadata specification.
-    - https://sdk.clams.ai/autodoc/clams.appmetadata.html python API
-    
-    :return: AppMetadata object holding all necessary information.
-    """
     
     # first set up some basic information
     metadata = AppMetadata(
         name="Distil Whisper Wrapper",
-        description="The wrapper of Distil-Whisper: distil-large-v3",  # briefly describe what the purpose and features of the app
+        description="The wrapper of Distil-Whisper, avaliable models: distil-large-v3, distil-large-v2, distil-medium.en, distil-small.en. The default model is distil-small.en.",  # briefly describe what the purpose and features of the app
         app_license="Apache 2.0",  # short name for a software license like MIT, Apache2, GPL, etc.
         identifier="distil-whisper-wrapper",  # should be a single string without whitespaces. If you don't intent to publish this app to the CLAMS app-directory, please use a full IRI format.
         url="https://github.com/clamsproject/app-distil-whisper-wrapper",  # a website where the source code and full documentation of the app is hosted
@@ -34,11 +26,14 @@ def appmetadata() -> AppMetadata:
     )
     # and then add I/O specifications: an app must have at least one input and one output
     metadata.add_input_oneof(DocumentTypes.AudioDocument, DocumentTypes.VideoDocument)
-    metadata.add_output(DocumentTypes.TextDocument, **{'@lang': 'en'})
+    out_td = metadata.add_output(DocumentTypes.TextDocument, **{'@lang': 'en'})
+    out_td.add_description('Fully serialized text content of the recognized text in the input audio/video.')
     timeunit = "milliseconds"
     metadata.add_output(AnnotationTypes.TimeFrame, timeUnit=timeunit)
-    metadata.add_output(AnnotationTypes.Alignment)
-    metadata.add_output(Uri.SENTENCE)
+    out_ali = metadata.add_output(AnnotationTypes.Alignment)
+    out_ali.add_description('Alignments between 1) `TimeFrame` <-> `SENTENCE`, 2) `audio/video document` <-> `TextDocument`')
+    out_sent = metadata.add_output(Uri.SENTENCE)
+    out_sent.add_description('The smallest recognized unit of distil-whisper. Normally a complete sentence.')
     
     # (optional) and finally add runtime parameter specifications
     metadata.add_parameter(
