@@ -1,0 +1,62 @@
+"""
+The purpose of this file is to define the metadata of the app with minimal imports.
+
+DO NOT CHANGE the name of the file
+"""
+
+from mmif import DocumentTypes, AnnotationTypes
+
+from clams.app import ClamsApp
+from clams.appmetadata import AppMetadata
+from lapps.discriminators import Uri
+
+
+# DO NOT CHANGE the function name
+def appmetadata() -> AppMetadata:
+    """
+    Function to set app-metadata values and return it as an ``AppMetadata`` obj.
+    Read these documentations before changing the code below
+    - https://sdk.clams.ai/appmetadata.html metadata specification.
+    - https://sdk.clams.ai/autodoc/clams.appmetadata.html python API
+    
+    :return: AppMetadata object holding all necessary information.
+    """
+    
+    # first set up some basic information
+    metadata = AppMetadata(
+        name="Distil Whisper Wrapper",
+        description="The wrapper of Distil-Whisper: distil-large-v3",  # briefly describe what the purpose and features of the app
+        app_license="Apache 2.0",  # short name for a software license like MIT, Apache2, GPL, etc.
+        identifier="distil-whisper-wrapper",  # should be a single string without whitespaces. If you don't intent to publish this app to the CLAMS app-directory, please use a full IRI format.
+        url="https://github.com/clamsproject/app-distil-whisper-wrapper",  # a website where the source code and full documentation of the app is hosted
+        analyzer_version='distil-large-v3', # use this IF THIS APP IS A WRAPPER of an existing computational analysis algorithm
+        analyzer_license="MIT",  # short name for a software license
+    )
+    # and then add I/O specifications: an app must have at least one input and one output
+    metadata.add_input_oneof(DocumentTypes.AudioDocument, DocumentTypes.VideoDocument)
+    metadata.add_output(DocumentTypes.TextDocument, **{'@lang': 'en'})
+    timeunit = "milliseconds"
+    metadata.add_output(AnnotationTypes.TimeFrame, timeUnit=timeunit)
+    metadata.add_output(AnnotationTypes.Alignment)
+    metadata.add_output(Uri.SENTENCE)
+    
+    # (optional) and finally add runtime parameter specifications
+    metadata.add_parameter(
+        name='modelSize', 
+        description='The size of the model to use. There are four size of model to use distil-large-v3, distil-large-v2, distil-medium.en, distil-small.en. The default model is distil-medium.en.)',
+        type='string',
+        choices=['distil-large-v3', 'distil-large-v2', 'distil-medium.en', 'distil-small.en', 'small', 's', 'medium', 'm', 'large-v2', 'l2', 'large-v3', 'l3'],
+        default="distil-small.en"
+    )
+    # metadta.add_parameter(more...)
+    
+    return metadata
+
+
+# DO NOT CHANGE the main block
+if __name__ == '__main__':
+    import sys
+    metadata = appmetadata()
+    for param in ClamsApp.universal_parameters:
+        metadata.add_parameter(**param)
+    sys.stdout.write(metadata.jsonify(pretty=True))
