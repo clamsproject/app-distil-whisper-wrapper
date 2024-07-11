@@ -1,16 +1,3 @@
-"""
-DELETE THIS MODULE STRING AND REPLACE IT WITH A DESCRIPTION OF YOUR APP.
-
-app.py Template
-
-The app.py script does several things:
-- import the necessary code
-- create a subclass of ClamsApp that defines the metadata and provides a method to run the wrapped NLP tool
-- provide a way to run the code as a RESTful Flask service
-
-
-"""
-
 import argparse
 import logging
 
@@ -25,12 +12,26 @@ from lapps.discriminators import Uri
 
 # Imports needed for distil whisper
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
 # Import needs for processing video file
 import tempfile
 import ffmpeg
+import torchaudio
 
+
+def process_output_with_enclosed_timestamps(output):
+        segments = []
+        raw_segments = output[0].split("<|")
+        for i in range(1, len(raw_segments), 2):  
+            start_segment = raw_segments[i].split("|>")
+            end_segment = raw_segments[i+1].split("|>") if i+1 < len(raw_segments) else ["", ""]
+            if len(start_segment) == 2 and len(end_segment) >= 1:
+                start_timestamp = int(float(start_segment[0]) * 1000)
+                text = start_segment[1]
+                end_timestamp = int(float(end_segment[0]) * 1000)
+                segments.append((start_timestamp, end_timestamp, text))
+        return segments
 
 class DistilWhisperWrapper(ClamsApp):
 
@@ -68,15 +69,17 @@ class DistilWhisperWrapper(ClamsApp):
         model = AutoModelForSpeechSeq2Seq.from_pretrained(model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True)
         model.to(device)
         processor = AutoProcessor.from_pretrained(model_id)
-        pipe = pipeline(
-            "automatic-speech-recognition",
-            model=model,
-            tokenizer=processor.tokenizer,
-            feature_extractor=processor.feature_extractor,
-            max_new_tokens=128,
-            torch_dtype=torch_dtype,
-            device=device,
-        )
+        
+        generate_kwargs = {
+            "max_new_tokens": 448,
+            "num_beams": 1,
+            "condition_on_prev_tokens": False,
+            "compression_ratio_threshold": 1.35,  # zlib compression ratio threshold (in token space)
+            "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+            "logprob_threshold": -1.0,
+            "no_speech_threshold": 0.6,
+            "return_timestamps": True,
+        }
 
         # try to get AudioDocuments
         docs = mmif.get_documents_by_type(DocumentTypes.AudioDocument)
@@ -89,16 +92,31 @@ class DistilWhisperWrapper(ClamsApp):
                 new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
                 new_view.new_contain(AnnotationTypes.Alignment)
 
-                result = pipe(file_path, return_timestamps=True)
-                output_text = result["text"]
-                text_document: Document = new_view.new_textdocument(text=output_text)
+                waveform, sampling_rate = torchaudio.load(file_path)
+                if sampling_rate != 16000:
+                    resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16000)
+                    waveform = resampler(waveform)
+                    sampling_rate = 16000
+
+                inputs = processor(
+                    waveform.squeeze().numpy(),  # Convert to numpy array and remove channel dimension if it's single-channel audio
+                    sampling_rate=sampling_rate,
+                    return_tensors="pt",  # Return PyTorch tensors
+                    padding="longest",  # This might not be necessary for a single file, but it's here for consistency
+                    return_attention_mask=True,
+                    truncation=False
+                )
+                inputs = inputs.to(device, dtype=torch_dtype)
+                pred_ids = model.generate(**inputs, **generate_kwargs)
+                pred_text = processor.batch_decode(pred_ids, skip_special_tokens=True, decode_with_timestamps=True)
+                processed_segments = process_output_with_enclosed_timestamps(pred_text)
+
+                td = ''.join(text for _, _, text in processed_segments)[1:]
+                text_document: Document = new_view.new_textdocument(text=td)
                 new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
-                for chunk in result["chunks"]:
-                    sentence = new_view.new_annotation(Uri.SENTENCE, text=chunk['text'])
-                    time = chunk["timestamp"]
-                    s = int(time[0] * 1000)
-                    e = int(time[1] * 1000)
-                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=s, end=e)
+                for segment in processed_segments:
+                    sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
+                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
                     new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
 
 
@@ -118,16 +136,26 @@ class DistilWhisperWrapper(ClamsApp):
                 new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
                 new_view.new_contain(AnnotationTypes.Alignment)
 
-                result = pipe(resampled_audio_fname, return_timestamps=True)
-                output_text = result["text"]
-                text_document: Document = new_view.new_textdocument(text=output_text)
+                waveform, sampling_rate = torchaudio.load(resampled_audio_fname)
+                inputs = processor(
+                    waveform.squeeze().numpy(),  
+                    sampling_rate=sampling_rate,
+                    return_tensors="pt",  
+                    padding="longest",  
+                    return_attention_mask=True,
+                    truncation=False
+                )
+                inputs = inputs.to(device, dtype=torch_dtype)
+                pred_ids = model.generate(**inputs, **generate_kwargs)
+                pred_text = processor.batch_decode(pred_ids, skip_special_tokens=True, decode_with_timestamps=True)
+                processed_segments = process_output_with_enclosed_timestamps(pred_text)
+
+                td = ''.join(text for _, _, text in processed_segments)[1:]
+                text_document: Document = new_view.new_textdocument(text=td)
                 new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
-                for chunk in result["chunks"]:
-                    sentence = new_view.new_annotation(Uri.SENTENCE, text=chunk['text'])
-                    time = chunk["timestamp"]
-                    s = int(time[0] * 1000)
-                    e = int(time[1] * 1000)
-                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", timeUnit="milliseconds", start=s, end=e)
+                for segment in processed_segments:
+                    sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
+                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
                     new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
         return mmif
 
@@ -141,8 +169,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", action="store", default="5000", help="set port to listen")
     parser.add_argument("--production", action="store_true", help="run gunicorn server")
-    # add more arguments as needed
-    # parser.add_argument(more_arg...)
 
     parsed_args = parser.parse_args()
 

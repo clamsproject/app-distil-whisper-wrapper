@@ -4,3 +4,4 @@ transformers
 accelerate
 numpy<2
 ffmpeg-python
+torchaudio
