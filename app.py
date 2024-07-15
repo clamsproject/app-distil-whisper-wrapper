@@ -12,7 +12,7 @@ from lapps.discriminators import Uri
 
 # Imports needed for distil whisper
 import torch
-from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 # Import needs for processing video file
 import tempfile
@@ -32,6 +32,18 @@ def process_output_with_enclosed_timestamps(output):
                 end_timestamp = int(float(end_segment[0]) * 1000)
                 segments.append((start_timestamp, end_timestamp, text))
         return segments
+
+def audio_duration_is_long(file_path):
+    try:
+        probe = ffmpeg.probe(file_path)
+        duration = float(probe['streams'][0]['duration'])
+        if duration > 30:
+            return True
+        else:
+            return False
+    except ffmpeg.Error as e:
+        print(f"An error occurred: {e.stderr.decode()}")
+        return False
 
 class DistilWhisperWrapper(ClamsApp):
 
@@ -69,94 +81,91 @@ class DistilWhisperWrapper(ClamsApp):
         model = AutoModelForSpeechSeq2Seq.from_pretrained(model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True)
         model.to(device)
         processor = AutoProcessor.from_pretrained(model_id)
-        
-        generate_kwargs = {
-            "max_new_tokens": 448,
-            "num_beams": 1,
-            "condition_on_prev_tokens": False,
-            "compression_ratio_threshold": 1.35,  # zlib compression ratio threshold (in token space)
-            "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-            "logprob_threshold": -1.0,
-            "no_speech_threshold": 0.6,
-            "return_timestamps": True,
-        }
 
-        # try to get AudioDocuments
+        # get the file path
         docs = mmif.get_documents_by_type(DocumentTypes.AudioDocument)
         if docs:
-            for doc in docs:
-                file_path = doc.location_path(nonexist_ok=False)
-                new_view = mmif.new_view()
-                self.sign_view(new_view, parameters)
-                new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id)
-                new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
-                new_view.new_contain(AnnotationTypes.Alignment)
+            doc = docs[0]
+            target_path = doc.location_path(nonexist_ok=False)
+        else:
+            docs = mmif.get_documents_by_type(DocumentTypes.VideoDocument)
+            doc = docs[0]
+            video_path = doc.location_path(nonexist_ok=False)
+            # transform the video file to audio file
+            audio_tmpdir = tempfile.TemporaryDirectory()
+            target_path = f'{audio_tmpdir.name}/{doc.id}_16kHz.wav'
+            ffmpeg.input(video_path).output(target_path, ac=1, ar=16000).run()
+        
+        new_view = mmif.new_view()
+        self.sign_view(new_view, parameters)
+        new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id)
+        new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
+        new_view.new_contain(AnnotationTypes.Alignment)
+        new_view.new_contain(Uri.SENTENCE, document=doc.long_id)
 
-                waveform, sampling_rate = torchaudio.load(file_path)
-                if sampling_rate != 16000:
+        # model run on long form audio using the model + processor API directly
+        if audio_duration_is_long(target_path):
+            # process the audio into tensor
+            waveform, sampling_rate = torchaudio.load(target_path)
+            if sampling_rate != 16000:
                     resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16000)
                     waveform = resampler(waveform)
                     sampling_rate = 16000
 
-                inputs = processor(
-                    waveform.squeeze().numpy(),  # Convert to numpy array and remove channel dimension if it's single-channel audio
-                    sampling_rate=sampling_rate,
-                    return_tensors="pt",  # Return PyTorch tensors
-                    padding="longest",  # This might not be necessary for a single file, but it's here for consistency
-                    return_attention_mask=True,
-                    truncation=False
-                )
-                inputs = inputs.to(device, dtype=torch_dtype)
-                pred_ids = model.generate(**inputs, **generate_kwargs)
-                pred_text = processor.batch_decode(pred_ids, skip_special_tokens=True, decode_with_timestamps=True)
-                processed_segments = process_output_with_enclosed_timestamps(pred_text)
+            inputs = processor(
+                waveform.squeeze().numpy(),  # Convert to numpy array and remove channel dimension if it's single-channel audio
+                sampling_rate=sampling_rate,
+                return_tensors="pt",  # Return PyTorch tensors
+                padding="longest",  # This might not be necessary for a single file, but it's here for consistency
+                return_attention_mask=True,
+                truncation=False
+            )
+            generate_kwargs = {
+                "max_new_tokens": 448,
+                "num_beams": 1,
+                "condition_on_prev_tokens": False,
+                "compression_ratio_threshold": 1.35,  # zlib compression ratio threshold (in token space)
+                "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                "logprob_threshold": -1.0,
+                "no_speech_threshold": 0.6,
+                "return_timestamps": True,
+            }
+            inputs = inputs.to(device, dtype=torch_dtype)
+            pred_ids = model.generate(**inputs, **generate_kwargs)
+            pred_text = processor.batch_decode(pred_ids, skip_special_tokens=True, decode_with_timestamps=True)
+            processed_segments = process_output_with_enclosed_timestamps(pred_text)
 
-                td = ''.join(text for _, _, text in processed_segments)[1:]
-                text_document: Document = new_view.new_textdocument(text=td)
-                new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
-                for segment in processed_segments:
-                    sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
-                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
-                    new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
-
-
-        # and if none found, try VideoDocuments
+            td = ''.join(text for _, _, text in processed_segments)[1:]
+            text_document: Document = new_view.new_textdocument(text=td)
+            new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
+            for segment in processed_segments:
+                sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
+                tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
+                new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
+        
+        # model run on short form using pipeline
         else:
-            docs = mmif.get_documents_by_type(DocumentTypes.VideoDocument)
-            for doc in docs:
-                video_path = doc.location_path(nonexist_ok=False)
-                # transform the video file to audio file
-                audio_tmpdir = tempfile.TemporaryDirectory()
-                resampled_audio_fname = f'{audio_tmpdir.name}/{doc.id}_16kHz.wav'
-                ffmpeg.input(video_path).output(resampled_audio_fname, ac=1, ar=16000).run()
-
-                new_view = mmif.new_view()
-                self.sign_view(new_view, parameters)
-                new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id)
-                new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
-                new_view.new_contain(AnnotationTypes.Alignment)
-
-                waveform, sampling_rate = torchaudio.load(resampled_audio_fname)
-                inputs = processor(
-                    waveform.squeeze().numpy(),  
-                    sampling_rate=sampling_rate,
-                    return_tensors="pt",  
-                    padding="longest",  
-                    return_attention_mask=True,
-                    truncation=False
-                )
-                inputs = inputs.to(device, dtype=torch_dtype)
-                pred_ids = model.generate(**inputs, **generate_kwargs)
-                pred_text = processor.batch_decode(pred_ids, skip_special_tokens=True, decode_with_timestamps=True)
-                processed_segments = process_output_with_enclosed_timestamps(pred_text)
-
-                td = ''.join(text for _, _, text in processed_segments)[1:]
-                text_document: Document = new_view.new_textdocument(text=td)
-                new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
-                for segment in processed_segments:
-                    sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
-                    tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
-                    new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
+            pipe = pipeline(
+                "automatic-speech-recognition",
+                model=model,
+                tokenizer=processor.tokenizer,
+                feature_extractor=processor.feature_extractor,
+                max_new_tokens=128,
+                torch_dtype=torch_dtype,
+                device=device,
+            )
+            result = pipe(target_path, return_timestamps=True)
+            output_text = result["text"]
+            text_document: Document = new_view.new_textdocument(text=output_text)
+            new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
+            for chunk in result["chunks"]:
+                sentence = new_view.new_annotation(Uri.SENTENCE, text=chunk['text'])
+                time = chunk["timestamp"]
+                s = int(time[0] * 1000)
+                e = int(time[1] * 1000)
+                tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=s, end=e)
+                new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
+        
         return mmif
 
 
