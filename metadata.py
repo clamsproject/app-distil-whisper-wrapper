@@ -21,7 +21,7 @@ def appmetadata() -> AppMetadata:
         app_license="Apache 2.0",  # short name for a software license like MIT, Apache2, GPL, etc.
         identifier="distil-whisper-wrapper",  # should be a single string without whitespaces. If you don't intent to publish this app to the CLAMS app-directory, please use a full IRI format.
         url="https://github.com/clamsproject/app-distil-whisper-wrapper",  # a website where the source code and full documentation of the app is hosted
-        analyzer_version='distil-large-v3', # use this IF THIS APP IS A WRAPPER of an existing computational analysis algorithm
+        analyzer_version='1.0', # use this IF THIS APP IS A WRAPPER of an existing computational analysis algorithm
         analyzer_license="MIT",  # short name for a software license
     )
     # and then add I/O specifications: an app must have at least one input and one output

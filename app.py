@@ -98,7 +98,7 @@ class DistilWhisperWrapper(ClamsApp):
         
         new_view = mmif.new_view()
         self.sign_view(new_view, parameters)
-        new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id)
+        new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id, _lang='en')
         new_view.new_contain(AnnotationTypes.TimeFrame, timeUnit="milliseconds", document=doc.long_id)
         new_view.new_contain(AnnotationTypes.Alignment)
         new_view.new_contain(Uri.SENTENCE, document=doc.long_id)
