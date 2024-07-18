@@ -38,7 +38,7 @@ def appmetadata() -> AppMetadata:
     # (optional) and finally add runtime parameter specifications
     metadata.add_parameter(
         name='modelSize', 
-        description='The size of the model to use. There are four size of model to use distil-large-v3, distil-large-v2, distil-medium.en, distil-small.en. The default model is distil-medium.en.)',
+        description='The size of the model to use. There are four size of model to use distil-large-v3, distil-large-v2, distil-medium.en, distil-small.en. You can also enter the abbreviation of the model as parameter. \'small\' and \'s\' for distil-small.en; \'medium\' and  \'m\' for distil-medium.en; \'large-v2\' and \'l2\' for distil-large-v2; \'large-v3\' and \'l3\' for distil-large-v3. The default model is distil-medium.en.)',
         type='string',
         choices=['distil-large-v3', 'distil-large-v2', 'distil-medium.en', 'distil-small.en', 'small', 's', 'medium', 'm', 'large-v2', 'l2', 'large-v3', 'l3'],
         default="distil-small.en"
