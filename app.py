@@ -21,17 +21,18 @@ import torchaudio
 
 
 def process_output_with_enclosed_timestamps(output):
-        segments = []
-        raw_segments = output[0].split("<|")
-        for i in range(1, len(raw_segments), 2):  
-            start_segment = raw_segments[i].split("|>")
-            end_segment = raw_segments[i+1].split("|>") if i+1 < len(raw_segments) else ["", ""]
-            if len(start_segment) == 2 and len(end_segment) >= 1:
-                start_timestamp = int(float(start_segment[0]) * 1000)
-                text = start_segment[1]
-                end_timestamp = int(float(end_segment[0]) * 1000)
-                segments.append((start_timestamp, end_timestamp, text))
-        return segments
+    segments = []
+    raw_segments = output[0].split("<|")
+    for i in range(1, len(raw_segments), 2):
+        start_segment = raw_segments[i].split("|>")
+        end_segment = raw_segments[i + 1].split("|>") if i + 1 < len(raw_segments) else ["", ""]
+        if len(start_segment) == 2 and len(end_segment) >= 1:
+            start_timestamp = int(float(start_segment[0]) * 1000)
+            text = start_segment[1]
+            end_timestamp = int(float(end_segment[0]) * 1000)
+            segments.append((start_timestamp, end_timestamp, text))
+    return segments
+
 
 def audio_duration_is_long(file_path):
     try:
@@ -45,15 +46,15 @@ def audio_duration_is_long(file_path):
         print(f"An error occurred: {e.stderr.decode()}")
         return False
 
-class DistilWhisperWrapper(ClamsApp):
 
+class DistilWhisperWrapper(ClamsApp):
     model_size_alias = {
-        'small': 'distil-small.en', 
-        's': 'distil-small.en', 
-        'medium': 'distil-medium.en', 
-        'm': 'distil-medium.en', 
-        'large-v2': 'distil-large-v2', 
-        'l2': 'distil-large-v2', 
+        'small': 'distil-small.en',
+        's': 'distil-small.en',
+        'medium': 'distil-medium.en',
+        'm': 'distil-medium.en',
+        'large-v2': 'distil-large-v2',
+        'l2': 'distil-large-v2',
         'large-v3': 'distil-large-v3',
         'l3': 'distil-large-v3'
     }
@@ -95,7 +96,7 @@ class DistilWhisperWrapper(ClamsApp):
             audio_tmpdir = tempfile.TemporaryDirectory()
             target_path = f'{audio_tmpdir.name}/{doc.id}_16kHz.wav'
             ffmpeg.input(video_path).output(target_path, ac=1, ar=16000).run()
-        
+
         new_view = mmif.new_view()
         self.sign_view(new_view, parameters)
         new_view.new_contain(DocumentTypes.TextDocument, document=doc.long_id, _lang='en')
@@ -108,9 +109,9 @@ class DistilWhisperWrapper(ClamsApp):
             # process the audio into tensor
             waveform, sampling_rate = torchaudio.load(target_path)
             if sampling_rate != 16000:
-                    resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16000)
-                    waveform = resampler(waveform)
-                    sampling_rate = 16000
+                resampler = torchaudio.transforms.Resample(orig_freq=sampling_rate, new_freq=16000)
+                waveform = resampler(waveform)
+                sampling_rate = 16000
 
             inputs = processor(
                 waveform.squeeze().numpy(),  # Convert to numpy array and remove channel dimension if it's single-channel audio
@@ -142,7 +143,7 @@ class DistilWhisperWrapper(ClamsApp):
                 sentence = new_view.new_annotation(Uri.SENTENCE, text=segment[2][1:])
                 tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=segment[0], end=segment[1])
                 new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
-        
+
         # model run on short form using pipeline
         else:
             pipe = pipeline(
@@ -165,9 +166,8 @@ class DistilWhisperWrapper(ClamsApp):
                 e = int(time[1] * 1000)
                 tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", start=s, end=e)
                 new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
-        
-        return mmif
 
+        return mmif
 
 
 def get_app():
