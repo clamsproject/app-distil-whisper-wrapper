@@ -18,20 +18,23 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 import tempfile
 import ffmpeg
 import torchaudio
+import re
 
 
 def process_output_with_enclosed_timestamps(output):
-        segments = []
-        raw_segments = output[0].split("<|")
-        for i in range(1, len(raw_segments), 2):  
-            start_segment = raw_segments[i].split("|>")
-            end_segment = raw_segments[i+1].split("|>") if i+1 < len(raw_segments) else ["", ""]
-            if len(start_segment) == 2 and len(end_segment) >= 1:
-                start_timestamp = int(float(start_segment[0]) * 1000)
-                text = start_segment[1]
-                end_timestamp = int(float(end_segment[0]) * 1000)
-                segments.append((start_timestamp, end_timestamp, text))
-        return segments
+    segments = re.split(r'(<\|\d+\.\d+\|>)', output[0])
+    collection = []
+    i = 1
+    while i < len(segments):
+        if re.match(r'<\|\d+\.\d+\|>', segments[i]):
+            if segments[i+1] != '' and not re.match(r'<\|\d+\.\d+\|>', segments[i+1]):
+                start = int(float(segments[i].strip('<|>|')) * 1000)
+                text = segments[i+1]
+                end = int(float(segments[i+2].strip('<|>|')) * 1000)
+                collection.append((start, end, text))
+                i += 2
+        i += 1
+    return collection
 
 def audio_duration_is_long(file_path):
     try:
