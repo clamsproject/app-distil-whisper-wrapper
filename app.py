@@ -114,7 +114,11 @@ class DistilWhisperWrapper(ClamsApp):
                     sentence = new_view.new_annotation(Uri.SENTENCE, text=chunk['text'])
                     time = chunk["timestamp"]
                     s = int(time[0] * 1000)
-                    e = int(time[1] * 1000)
+                    if time[1] is None:
+                        probe = ffmpeg.probe(video_path)
+                        e = int(float(probe['streams'][0]['duration']) * 1000)
+                    else:
+                        e = int(time[1] * 1000)
                     tf = new_view.new_annotation(AnnotationTypes.TimeFrame, frameType="speech", timeUnit="milliseconds", start=s, end=e)
                     new_view.new_annotation(AnnotationTypes.Alignment, source=tf.long_id, target=sentence.long_id)
         return mmif
