@@ -60,10 +60,13 @@ class DistilWhisperWrapper(ClamsApp):
             model=model,
             tokenizer=processor.tokenizer,
             feature_extractor=processor.feature_extractor,
-            max_new_tokens=128,
+            max_new_tokens=256,
             chunk_length_s=25,
             torch_dtype=torch_dtype,
             device=device,
+            generate_kwargs={
+                'forced_decoder_ids': None,
+            }
         )
 
         # try to get AudioDocuments
@@ -107,6 +110,8 @@ class DistilWhisperWrapper(ClamsApp):
                 new_view.new_contain(AnnotationTypes.Alignment)
 
                 result = pipe(resampled_audio_fname, return_timestamps=True)
+
+                # result = pipe(resampled_audio_fname, return_timestamps=True)
                 output_text = result["text"]
                 text_document: Document = new_view.new_textdocument(text=output_text)
                 new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
