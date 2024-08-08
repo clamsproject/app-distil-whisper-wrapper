@@ -110,8 +110,6 @@ class DistilWhisperWrapper(ClamsApp):
                 new_view.new_contain(AnnotationTypes.Alignment)
 
                 result = pipe(resampled_audio_fname, return_timestamps=True)
-
-                # result = pipe(resampled_audio_fname, return_timestamps=True)
                 output_text = result["text"]
                 text_document: Document = new_view.new_textdocument(text=output_text)
                 new_view.new_annotation(AnnotationTypes.Alignment, source=doc.long_id, target=text_document.long_id)
